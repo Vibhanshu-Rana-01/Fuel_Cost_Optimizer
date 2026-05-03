@@ -1,4 +1,4 @@
-# FuelSmart — Fuel-Efficient Route Optimizer API
+# Fuel Efficient Route Optimizer
 
 A high-performance REST API that calculates the **globally optimal** fueling strategy for long-distance road trips within the USA. Given a start and finish location, FuelSmart finds the sequence of fuel stops that minimizes your total trip cost — accounting for both fuel price per gallon and the real cost of driving off the highway to reach each station.
 
@@ -17,9 +17,7 @@ A high-performance REST API that calculates the **globally optimal** fueling str
 
 ---
 
-## Why Dijkstra and Not Greedy
-
-A greedy algorithm picks the cheapest station in the current window at each step. This can lead to locally good but globally bad decisions — a cheap stop now might force an expensive stop later.
+## Why Dijkstra
 
 Dijkstra evaluates every possible combination of stops across the entire route and finds the path with the minimum total cost. It is mathematically guaranteed to find the optimal solution.
 
@@ -122,7 +120,7 @@ Create a `.env` file in the project root:
 ```
 DJANGO_SECRET_KEY=your-secret-key-here
 GOOGLE_MAPS_API_KEY=your-google-maps-api-key-here
-DEBUG=True
+DEBUG=False
 ALLOWED_HOSTS=localhost,127.0.0.1
 ```
 
@@ -159,16 +157,59 @@ Calculate the globally optimal fueling strategy for a trip.
 
 ```json
 {
-  "total_distance_miles": 2791.5,
-  "total_fuel_cost": 854.10,
-  "route_polyline": "encoded_polyline_string",
-  "fuel_stops": [
-    {
-      "station_name": "HOPI TRAVEL PLAZA",
-      "location": [36.2883, -115.0888],
-      "price_per_gallon": 3.139
-    }
-  ]
+    "total_distance_miles": 2905.96,
+    "total_fuel_cost": 758.99,
+    "route_polyline": "m|peFn`ejVcaL}zV_h\\hcAs}JqzNixM_A{oUyb[szb@scf@c{R}`X_pH_sd@crOuxf@qbc@igg@qzUykXcbWodLitb@_tm@azGus]abDchl@_fBelc@ctAqvNktFmaE{~R}dHi{Bs{k@|yAszVqnHebRoeEqsc@ioJqxc@eeQerS}cn@a|fA{~Oc_KgyLykW}{`@}y_@sco@}iJivTojg@crPonIayYa{[epLggXqqGmc\\deQua[xhOmwm@z{h@csq@t{Aos[k|DsoDs|Cg{UsYkqa@|qEis[iwMeeg@lMinZclMyrVy~Rcj[efKs`k@coXyqp@gyCspe@duE_wzAz_Zqvh@dhXiga@npKq|NnPerXjdBsi_Do`Hsy^guG}fKpsJcr]~eQa~mAy_Qgcc@m`B_d]z_Jcjf@_oDqlYtv@koc@cbNypPqnYtjAmeF|F_{CqeFmyHcoPuaT}z\\edOuhO{v@gmPwyG{tg@wvC_ry@ocQyv~@s{Rwh`@e{B}tc@_zAmbd@nxDom^ysJcm`@yqNgou@kl@m`k@noE}fn@dMqzt@qtLamoAswMu`}BblIws~Aba@aci@|fSe~i@r_b@mew@jf_@}juAzhH_uM~fJyoCrdLmxb@iaC{z`BinEonqAkjEusxA}wDctdAl`LwsnAr_GepcA~xKcgnA}aJuldDw}E}ziAdrDwj`Afag@kxwBdo^glkAtuHs`|@r\\cveBk}W___BgV_i_EHakjAlCyjd@_hG_z[e{Gq`j@{rJarRw`KanRibPsgNsvSkob@s}Gk}m@_gk@qdh@RawmE{{Eky|AmxJ}~l@}sJo~Hu_@ymh@mtCkkd@aR}hv@mcAu}oBhk@kjgC|eGm~~BffBs_|@b_Gmg\\|_LwIryKybMxLao^l|Behu@jlGcq}@{Y_zt@vjCckzAs]slhBs~Fw{c@inQcut@{_KqhtBukA_mnB}_^a}rAztAwhaBmkBqk|BfKe~w@bwT{nl@nxGeskCkhAitx@rvJaaw@lmb@ootBngFok|@akJklmAhg@ovj@r{Ko{k@njI{he@~nAylkAtMw``@drNqrPpuHq|O}`FimTeiFwnd@jEq|h@qy@esqAxq@mdeAn|Ae`sA~qHussAz`Qc{u@dbIeb`Ag`E{d`@b`KwqYquOgfj@}cCck^gfCssdAxfPw{v@}cFeykAjsAmzb@wvHsgo@cwAmkqArx@ihUl~GudHrhEia_@x{IgaGa[suPr{Auq`@hiD__c@`xBcgc@nrWc~y@~xEyq]",
+    "fuel_stops": [
+        {
+            "station_name": "GOLDEN GATE BATTLE MOUNTAIN",
+            "location": [
+                40.6299,
+                -116.9518
+            ],
+            "price_per_gallon": 3.339
+        },
+        {
+            "station_name": "PWI #586",
+            "location": [
+                41.5947,
+                -109.2209
+            ],
+            "price_per_gallon": 3.199
+        },
+        {
+            "station_name": "BIG D #30",
+            "location": [
+                41.135,
+                -104.7902
+            ],
+            "price_per_gallon": 3.204
+        },
+        {
+            "station_name": "AKAL TRAVEL CENTER",
+            "location": [
+                40.897,
+                -97.4619
+            ],
+            "price_per_gallon": 2.799
+        },
+        {
+            "station_name": "QUIKTRIP #7203",
+            "location": [
+                41.3482,
+                -89.1371
+            ],
+            "price_per_gallon": 2.969
+        },
+        {
+            "station_name": "SHEETZ #639",
+            "location": [
+                41.0993,
+                -80.6463
+            ],
+            "price_per_gallon": 3.059
+        }
+    ]
 }
 ```
 
