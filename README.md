@@ -148,7 +148,7 @@ Calculate the globally optimal fueling strategy for a trip.
 
 ```json
 {
-  "start": "Los Angeles, CA",
+  "start": "San Fracisco, CA",
   "finish": "New York, NY"
 }
 ```
