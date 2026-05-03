@@ -187,6 +187,17 @@ class FuelOptimizer:
         # Extract actual fuel stops (exclude START and END virtual nodes)
         selected = [nodes[i] for i in path if nodes[i]['name'] not in ('START', 'END')]
 
+        total_fuel_cost = dist[end_idx]
+
+        # Short route — no stops selected, charge the full trip at starting price
+        if not selected:
+            total_fuel_cost = round((total_miles / MPG) * starting_price, 2)
+        else:
+            # Add final leg cost — miles from last stop to destination
+            # charged at last stop's price (fuel already in tank from last fill)
+            final_leg = total_miles - selected[-1]['route_mile']
+            total_fuel_cost = round(dist[end_idx] + (final_leg / MPG) * selected[-1]['price'], 2)
+
         return {
             'fuel_stops': [
                 {
@@ -196,5 +207,5 @@ class FuelOptimizer:
                 }
                 for s in selected
             ],
-            'total_fuel_cost': round(dist[end_idx], 2),
+            'total_fuel_cost': total_fuel_cost,
         }
