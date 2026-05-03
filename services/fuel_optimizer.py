@@ -1,12 +1,10 @@
-import bisect
+import heapq
 import numpy as np
 from services.fuel_data_loader import FuelDataLoader
 
 TANK_MILES = 500
 MPG = 10
 SEARCH_RADIUS_MILES = 30
-# Only consider stations at least MIN_LEG_MILES ahead to avoid tiny hops
-MIN_LEG_MILES = 200
 
 
 def _cumulative_distances(coords):
@@ -14,8 +12,10 @@ def _cumulative_distances(coords):
     cum = [0.0]
     R = 3958.8
     for i in range(1, len(coords)):
-        lat1, lon1 = np.radians(coords[i-1][0]), np.radians(coords[i-1][1])
-        lat2, lon2 = np.radians(coords[i][0]), np.radians(coords[i][1])
+        lat1 = np.radians(coords[i-1][0])
+        lon1 = np.radians(coords[i-1][1])
+        lat2 = np.radians(coords[i][0])
+        lon2 = np.radians(coords[i][1])
         dphi = lat2 - lat1
         dlambda = lon2 - lon1
         a = np.sin(dphi / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlambda / 2) ** 2
@@ -23,17 +23,27 @@ def _cumulative_distances(coords):
     return cum
 
 
+def _haversine_vectorised(slat, slon, lats, lons):
+    """Compute distances from one point to an array of points."""
+    R = 3958.8
+    phi1 = np.radians(slat)
+    phi2 = np.radians(lats)
+    dphi = np.radians(lats - slat)
+    dlambda = np.radians(lons - slon)
+    a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
+    return R * 2 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+
+
 def _stations_near_route(coords, cum_dist, fuel_df):
     """
-    Vectorised haversine: compute distance from every station to every route
-    coordinate in one numpy matrix operation. Returns stations within
-    SEARCH_RADIUS_MILES of the route, sorted by route_mile.
+    Vectorised haversine: find all stations within SEARCH_RADIUS_MILES of the route.
+    Returns stations sorted by route_mile, each with detour_miles stored.
     """
-    route_lats = np.array([c[0] for c in coords])        # shape (R,)
-    route_lons = np.array([c[1] for c in coords])        # shape (R,)
-    station_lats = fuel_df['lat'].values[:, np.newaxis]  # shape (S, 1)
-    station_lons = fuel_df['lon'].values[:, np.newaxis]  # shape (S, 1)
-    cum_arr = np.array(cum_dist)                         # shape (R,)
+    route_lats = np.array([c[0] for c in coords])
+    route_lons = np.array([c[1] for c in coords])
+    station_lats = fuel_df['lat'].values[:, np.newaxis]
+    station_lons = fuel_df['lon'].values[:, np.newaxis]
+    cum_arr = np.array(cum_dist)
 
     R = 3958.8
     phi1 = np.radians(station_lats)
@@ -41,7 +51,7 @@ def _stations_near_route(coords, cum_dist, fuel_df):
     dphi = np.radians(route_lats - station_lats)
     dlambda = np.radians(route_lons - station_lons)
     a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
-    dist_matrix = R * 2 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))  # (S, R)
+    dist_matrix = R * 2 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
 
     nearest_idxs = np.argmin(dist_matrix, axis=1)
     min_dists = dist_matrix[np.arange(len(fuel_df)), nearest_idxs]
@@ -49,6 +59,7 @@ def _stations_near_route(coords, cum_dist, fuel_df):
     mask = min_dists <= SEARCH_RADIUS_MILES
     matched_df = fuel_df[mask].reset_index(drop=True)
     matched_idxs = nearest_idxs[mask]
+    matched_dists = min_dists[mask]
 
     stations = [
         {
@@ -57,11 +68,41 @@ def _stations_near_route(coords, cum_dist, fuel_df):
             'lon': matched_df.iloc[i]['lon'],
             'price': matched_df.iloc[i]['price'],
             'route_mile': float(cum_arr[matched_idxs[i]]),
+            'detour_miles': float(matched_dists[i]),
         }
         for i in range(len(matched_df))
     ]
 
     return sorted(stations, key=lambda s: s['route_mile'])
+
+
+def _starting_price(start_coord, fuel_df):
+    """
+    Average price of stations within SEARCH_RADIUS_MILES of trip origin.
+    Uses coords[0] — no extra API call. Falls back to national average.
+    """
+    slat, slon = start_coord
+    dists = _haversine_vectorised(slat, slon, fuel_df['lat'].values, fuel_df['lon'].values)
+    nearby_prices = fuel_df['price'].values[dists <= SEARCH_RADIUS_MILES]
+    if len(nearby_prices) > 0:
+        return float(np.mean(nearby_prices))
+    return float(fuel_df['price'].mean())
+
+
+def _edge_cost(station_i, station_j):
+    """
+    Total cost of driving from station_i to station_j and refuelling.
+
+    refil_cost  = gallons consumed on route leg × station_j price
+    detour_cost = (detour_miles at j / MPG) × (price_i + price_j)
+                  using average of both prices as you drive there at i's price
+                  and back at j's price after refuelling.
+    """
+    leg_miles = station_j['route_mile'] - station_i['route_mile']
+    gallons_consumed = leg_miles / MPG
+    refil_cost = gallons_consumed * station_j['price']
+    detour_cost = (station_j['detour_miles'] / MPG) * (station_i['price'] + station_j['price'])
+    return refil_cost + detour_cost
 
 
 class FuelOptimizer:
@@ -72,60 +113,79 @@ class FuelOptimizer:
         cum_dist = _cumulative_distances(coords)
         stations = _stations_near_route(coords, cum_dist, self._fuel_df)
 
-        route_miles = [s['route_mile'] for s in stations]
+        starting_price = _starting_price(coords[0], self._fuel_df)
 
-        selected = []
-        current_mile = 0.0
+        # Virtual START node — mile 0, starting price, no detour
+        start_node = {
+            'name': 'START',
+            'lat': coords[0][0],
+            'lon': coords[0][1],
+            'price': starting_price,
+            'route_mile': 0.0,
+            'detour_miles': 0.0,
+        }
 
-        while total_miles - current_mile > TANK_MILES:
-            window_end = current_mile + TANK_MILES
+        # Virtual END node — destination, price 0, no detour
+        end_node = {
+            'name': 'END',
+            'lat': coords[-1][0],
+            'lon': coords[-1][1],
+            'price': 0.0,
+            'route_mile': total_miles,
+            'detour_miles': 0.0,
+        }
 
-            pref_start = bisect.bisect_right(route_miles, current_mile + MIN_LEG_MILES)
-            window_start = bisect.bisect_right(route_miles, current_mile)
-            window_end_idx = bisect.bisect_right(route_miles, window_end)
+        # Full node list: START + route stations + END
+        nodes = [start_node] + stations + [end_node]
+        n = len(nodes)
+        end_idx = n - 1
 
-            preferred = stations[pref_start:window_end_idx]
-            candidates = preferred if preferred else stations[window_start:window_end_idx]
+        # Build adjacency: for each node i find all reachable nodes j
+        # j is reachable if route distance <= TANK_MILES
+        adjacency = [[] for _ in range(n)]
+        for i in range(n - 1):
+            for j in range(i + 1, n):
+                leg = nodes[j]['route_mile'] - nodes[i]['route_mile']
+                if leg > TANK_MILES:
+                    break  # nodes are sorted by route_mile so no point continuing
+                cost = _edge_cost(nodes[i], nodes[j])
+                adjacency[i].append((cost, j))
 
-            if not candidates:
-                raise ValueError(
-                    f"No fuel station within {TANK_MILES} miles of mile marker "
-                    f"{current_mile:.1f}. Route may pass through uncovered area."
-                )
+        # Dijkstra from node 0 (START) to end_idx (END)
+        dist = [float('inf')] * n
+        prev = [-1] * n
+        dist[0] = 0.0
+        heap = [(0.0, 0)]
 
-            best = min(candidates, key=lambda s: s['price'])
-            selected.append(best)
-            current_mile = best['route_mile']
+        while heap:
+            current_cost, u = heapq.heappop(heap)
+            if current_cost > dist[u]:
+                continue
+            if u == end_idx:
+                break
+            for edge_cost, v in adjacency[u]:
+                new_cost = dist[u] + edge_cost
+                if new_cost < dist[v]:
+                    dist[v] = new_cost
+                    prev[v] = u
+                    heapq.heappush(heap, (new_cost, v))
 
-        # Cost model: each leg is charged at the price of the stop at the END
-        # of that leg (i.e. the price you pay when you arrive and refuel).
-        # The first leg (start → first stop) is charged at the first stop price.
-        # The final leg (last stop → destination) is charged at the last stop price.
-        total_cost = 0.0
-        prev_mile = 0.0
+        if dist[end_idx] == float('inf'):
+            raise ValueError(
+                "No viable route found between the given locations. "
+                "The route may pass through an area with no fuel stations within tank range."
+            )
 
-        if not selected:
-            # Route is under TANK_MILES — no stops needed.
-            # Find the cheapest station on the route to estimate fuel cost.
-            if stations:
-                cheapest = min(stations, key=lambda s: s['price'])
-                total_cost = (total_miles / MPG) * cheapest['price']
-            else:
-                # No stations found on route at all — cannot calculate cost.
-                raise ValueError(
-                    "No fuel stations found near this route. "
-                    "Cannot calculate fuel cost."
-                )
-        else:
-            for stop in selected:
-                leg_miles = stop['route_mile'] - prev_mile
-                total_cost += (leg_miles / MPG) * stop['price']
-                prev_mile = stop['route_mile']
+        # Reconstruct path
+        path = []
+        node = end_idx
+        while node != -1:
+            path.append(node)
+            node = prev[node]
+        path.reverse()
 
-            # Final leg to destination
-            final_leg = total_miles - prev_mile
-            if final_leg > 0:
-                total_cost += (final_leg / MPG) * selected[-1]['price']
+        # Extract actual fuel stops (exclude START and END virtual nodes)
+        selected = [nodes[i] for i in path if nodes[i]['name'] not in ('START', 'END')]
 
         return {
             'fuel_stops': [
@@ -136,5 +196,5 @@ class FuelOptimizer:
                 }
                 for s in selected
             ],
-            'total_fuel_cost': round(total_cost, 2),
+            'total_fuel_cost': round(dist[end_idx], 2),
         }
